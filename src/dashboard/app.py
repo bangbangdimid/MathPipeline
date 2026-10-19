@@ -7,10 +7,11 @@ feedback (which distils into feedback_rules that future compose prompts obey).
 from __future__ import annotations
 import html
 import os
+import threading
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, FileResponse
 
-from src.config import load_settings, abspath
+from src.config import load_settings, load_providers, abspath
 from src import db as dbmod
 from src.dashboard import queries as Q
 from src.feedback import store as FB
@@ -22,7 +23,35 @@ _DB = abspath(load_settings()["paths"]["db"])
 
 def conn():
     c = dbmod.get_conn(_DB)
+    try:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA busy_timeout=60000")
+    except Exception:
+        pass
     return c
+
+
+# Names of background jobs currently running (shown live in the UI).
+RUNNING: dict = {}
+_RLOCK = threading.Lock()
+
+
+def _launch(name, fn):
+    with _RLOCK:
+        if name in RUNNING:
+            return f"<div class='ok'>“{esc(name)}” đang chạy rồi — xem tiến độ bên dưới.</div>"
+        RUNNING[name] = True
+
+    def wrap():
+        try:
+            fn()
+        except Exception as e:
+            print(f"[dashboard task {name}] error: {e}", flush=True)
+        finally:
+            RUNNING.pop(name, None)
+
+    threading.Thread(target=wrap, daemon=True).start()
+    return f"<div class='ok'>Đã khởi động: <b>{esc(name)}</b>. Tiến độ cập nhật bên dưới.</div>"
 
 
 def esc(x):
@@ -90,9 +119,16 @@ def page(body):
     return HTMLResponse(_HEAD + body + _FOOT)
 
 
-@app.get("/", response_class=HTMLResponse)
-def home():
-    c = conn(); s = Q.stats(c); c.close()
+_CORPUS_DEFAULT = r"C:\Users\NGOCD\Downloads\tai_lieu_toan_thcs_full"
+
+
+def _jobs_status(c):
+    return {r["status"]: r["n"] for r in c.execute(
+        "SELECT status, COUNT(*) n FROM jobs WHERE job_type='ingest_doc' GROUP BY status")}
+
+
+def _progress_html():
+    c = conn(); s = Q.stats(c); js = _jobs_status(c); c.close()
     cards = [("Tài liệu", s["documents"]), ("Trang", s["pages"]),
              ("Bài toán", s["problems"]), ("Đã phân loại", s["classified"]),
              ("Cặp trùng", s["duplicates"]), ("Chuyên đề", s["chuyende"]),
@@ -100,16 +136,85 @@ def home():
              ("Quy tắc active", s["rules"])]
     grid = "".join(f"<div class='card'><div class='n'>{v}</div><div class='l'>{esc(l)}</div></div>"
                    for l, v in cards)
+    jb = " ".join(f"<span class='pill'>{esc(k)}: {v}</span>" for k, v in js.items()) \
+        or "<span class='muted'>chưa có job</span>"
     pbs = " ".join(f"<span class='pill'>{esc(k)}: {v}</span>"
                    for k, v in s["pages_by_status"].items()) or "<span class='muted'>—</span>"
     vbs = " ".join(f"<span class='pill'>{esc(k)}: {v}</span>"
                    for k, v in s["verify_by_status"].items()) or "<span class='muted'>chưa có</span>"
-    return page(
-        f"<h2>Tổng quan tiến độ</h2><div class='grid'>{grid}</div>"
-        f"<p class='muted' style='margin-top:20px'>Trạng thái OCR trang:</p>"
-        f"<div class='barwrap'>{pbs}</div>"
-        f"<p class='muted' style='margin-top:14px'>Trạng thái kiểm chứng:</p>"
-        f"<div class='barwrap'>{vbs}</div>")
+    running = ", ".join(RUNNING.keys())
+    run_line = (f"<p class='muted'>⏳ Đang chạy: <b>{esc(running)}</b></p>" if running
+                else "<p class='muted'>Không có tác vụ nào đang chạy.</p>")
+    return (f"<div class='grid'>{grid}</div>{run_line}"
+            f"<p class='muted'>Jobs ingest:</p><div class='barwrap'>{jb}</div>"
+            f"<p class='muted'>Trạng thái OCR trang:</p><div class='barwrap'>{pbs}</div>"
+            f"<p class='muted'>Trạng thái kiểm chứng:</p><div class='barwrap'>{vbs}</div>")
+
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+    control = f"""<h2>Điều khiển</h2>
+<form class="fb" hx-post="/run/enqueue" hx-target="#runmsg" style="margin-bottom:10px">
+ <label>Thư mục corpus để nạp hàng đợi</label>
+ <input name="dir" value="{esc(_CORPUS_DEFAULT)}">
+ <label>Giới hạn số file (để trống = tất cả)</label>
+ <input name="limit" placeholder="vd: 50">
+ <button type="submit">Enqueue (nạp hàng đợi)</button></form>
+<div class="barwrap">
+ <button hx-post="/run/ingest" hx-target="#runmsg">▶ Chạy ingest (OCR)</button>
+ <button hx-post="/run/build" hx-target="#runmsg">Dựng ngân hàng bài</button>
+ <button hx-post="/run/scalpel" hx-target="#runmsg">Scalpel (Gemini)</button></div>
+<div id="runmsg" style="margin-top:10px"></div>"""
+    prog = ("<h2 style='margin-top:26px'>Tiến độ (tự cập nhật mỗi 3s)</h2>"
+            "<div hx-get='/progress' hx-trigger='load, every 3s'>" + _progress_html() + "</div>")
+    return page(control + prog)
+
+
+@app.get("/progress", response_class=HTMLResponse)
+def progress():
+    return HTMLResponse(_progress_html())
+
+
+@app.post("/run/enqueue", response_class=HTMLResponse)
+def run_enqueue(dir: str = Form(...), limit: str = Form("")):
+    from src.orchestrator import queue as OQ
+    lim = int(limit) if limit.strip().isdigit() else None
+    if not os.path.isdir(dir):
+        return HTMLResponse(f"<div class='ok'>Không thấy thư mục: {esc(dir)}</div>")
+    c = conn()
+    added, total = OQ.enqueue_dir(c, dir, None, lim, 0)
+    c.close()
+    return HTMLResponse(f"<div class='ok'>Enqueue: thêm <b>{added}</b> job mới (tổng {total} pdf).</div>")
+
+
+@app.post("/run/ingest", response_class=HTMLResponse)
+def run_ingest():
+    def job():
+        from src.orchestrator.worker import run
+        s = load_settings()
+        run(abspath(s["paths"]["db"]), abspath(s["paths"]["renders"]), 2, None)
+    return HTMLResponse(_launch("ingest (OCR)", job))
+
+
+@app.post("/run/build", response_class=HTMLResponse)
+def run_build():
+    def job():
+        from src.ingest.repropagate import repropagate
+        c = conn(); repropagate(c); c.close()
+    return HTMLResponse(_launch("dựng ngân hàng bài", job))
+
+
+@app.post("/run/scalpel", response_class=HTMLResponse)
+def run_scalpel():
+    def job():
+        from src.providers.base import get_active_provider
+        p = get_active_provider(load_providers())
+        if p is None:
+            print("[dashboard] scalpel: no Gemini key", flush=True)
+            return
+        from src.ingest.scalpel import rescan_scalpel
+        c = conn(); rescan_scalpel(c, p); c.close()
+    return HTMLResponse(_launch("scalpel (Gemini)", job))
 
 
 @app.get("/problems", response_class=HTMLResponse)

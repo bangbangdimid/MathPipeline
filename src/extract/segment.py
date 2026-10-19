@@ -10,6 +10,20 @@ from src.extract.textnorm import canonical_hash
 
 PROBLEM_RE = re.compile(r'(?im)^\s*(Bài|Câu|BÀI|CÂU)\s+([0-9IVXLivxl]+)\b')
 SOLUTION_MARK = re.compile(r'(?i)(Lời giải|Hướng dẫn giải|Hướng dẫn|Đáp án|Lời giải chi tiết|Giải\s*:)')
+# Trailing exam boilerplate to cut off the end of a statement.
+BOILERPLATE = re.compile(
+    r'(?i)(-{2,}\s*)?\bH[ẾÉE]T\b'
+    r'|Gi[áa]m th[ịi] coi'
+    r'|C[áa]n b[ộo] coi thi'
+    r'|coi thi kh[ôo]ng gi'
+    r'|H[ọo]c sinh kh[ôo]ng (đ|d)[ưuợ]+c d[ùu]ng')
+
+
+def strip_boilerplate(s: str) -> str:
+    m = BOILERPLATE.search(s)
+    if m and m.start() > 20:   # don't nuke a whole short statement
+        return s[:m.start()].rstrip()
+    return s
 CONCL_VERBS = re.compile(
     r'(?i)\b(Chứng minh|Chứng tỏ|Tính|Tìm|Giải|Xác định|So sánh|Rút gọn|Vẽ|Lập|Cho biết|Hỏi)\b')
 
@@ -47,6 +61,7 @@ def split_problems(page_latex: str):
         if len(text) < 8:
             continue
         statement, solution = split_solution(text)
+        statement = strip_boilerplate(statement)
         hyp, concl = split_hyp_concl(statement)
         problems.append(dict(number=num, statement_latex=statement,
                              hypotheses=hyp, conclusion=concl, solution_latex=solution))

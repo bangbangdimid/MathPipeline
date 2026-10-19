@@ -23,53 +23,12 @@ from src.ingest.triage import triage_document  # noqa: E402
 
 def ingest(pdf_path: str, grade: str | None, max_ocr_pages: int):
     settings = load_settings()
-    load_providers()
     conn = db.get_conn(abspath(settings["paths"]["db"]))
     renders = abspath(settings["paths"]["renders"])
-
-    print(f"[triage] {os.path.basename(pdf_path)}")
-    info = triage_document(pdf_path, settings, renders)
-    print(f"[triage] source_type={info['source_type']} pages={info['num_pages']}")
-
-    doc_id = db.upsert_document(conn, sha256=info["sha256"], pdf_path=pdf_path,
-                                grade=grade, num_pages=info["num_pages"],
-                                source_type=info["source_type"], bytes=info["bytes"])
-    conn.commit()
-
-    pdf = pymupdf.open(pdf_path)
-    ocr_done = 0
-    for p in info["pages"]:
-        if p["kind"] == "text":
-            text = pdf[p["page_no"] - 1].get_text("text")
-            db.insert_page(conn, doc_id, p["page_no"], "text", None, p["text_chars"],
-                           ocr_engine="native", ocr_status="local_done",
-                           latex=text, min_conf=1.0)
-            print(f"  p{p['page_no']:>3} text   ({p['text_chars']} chars)")
-        else:
-            if max_ocr_pages and ocr_done >= max_ocr_pages:
-                db.insert_page(conn, doc_id, p["page_no"], p["kind"], p["image_path"],
-                               p["text_chars"], ocr_status="pending")
-                print(f"  p{p['page_no']:>3} {p['kind']:<5} deferred (cap reached)")
-                continue
-            from src.ingest.ocr_hybrid import page_to_elements, elements_to_latex
-            els = page_to_elements(p["image_path"])
-            latex = elements_to_latex(els)
-            min_conf = min([e["confidence"] for e in els], default=1.0)
-            needs = 1 if any(e["needs_scalpel"] for e in els) else 0
-            page_id = db.insert_page(conn, doc_id, p["page_no"], p["kind"], p["image_path"],
-                                     p["text_chars"], ocr_engine="pix2text+easyocr",
-                                     ocr_status=("needs_review" if needs else "local_done"),
-                                     latex=latex, min_conf=min_conf, needs_review=needs)
-            for e in els:
-                db.insert_element(conn, page_id, e)
-            ocr_done += 1
-            flag = " [needs_scalpel]" if needs else ""
-            print(f"  p{p['page_no']:>3} {p['kind']:<5} OCR {len(els)} elems, "
-                  f"min_conf={min_conf:.2f}{flag}")
-    pdf.close()
-    conn.execute("UPDATE documents SET ocr_status=? WHERE id=?",
-                 ("done" if not max_ocr_pages else "partial", doc_id))
-    conn.commit()
+    from src.ingest.run import ingest_document
+    print(f"[ingest] {os.path.basename(pdf_path)}")
+    doc_id = ingest_document(conn, pdf_path, grade, max_ocr_pages, settings, renders,
+                             log=lambda m: print("  " + m))
     conn.close()
     print(f"[done] document id={doc_id}")
 
@@ -146,6 +105,30 @@ def compose_cmd(title, grade, label, difficulty, limit, use_llm=False):
           f"compile_rc={res['compile_rc']}")
     print(f"          tex={res['tex']}")
     print(f"          pdf={res['pdf']}")
+
+
+def orchestrate_cmd(args):
+    settings = load_settings()
+    db_path = abspath(settings["paths"]["db"])
+    renders = abspath(settings["paths"]["renders"])
+    from src.orchestrator import queue as Q
+    if args.sub == "enqueue":
+        conn = db.get_conn(db_path)
+        added, total = Q.enqueue_dir(conn, args.dir, args.grade, args.limit, args.max_ocr_pages)
+        print(f"[orchestrate] enqueued {added} new ingest_doc jobs (of {total} pdfs found)")
+        conn.close()
+    elif args.sub == "status":
+        conn = db.get_conn(db_path)
+        print("[orchestrate] ingest_doc jobs:", Q.status(conn))
+        conn.close()
+    elif args.sub == "run":
+        from src.orchestrator.worker import run
+        print(f"[orchestrate] running {args.workers} worker(s)"
+              + (f", max {args.max} jobs each" if args.max else ""))
+        run(db_path, renders, args.workers, args.max)
+        conn = db.get_conn(db_path)
+        print("[orchestrate] after run:", Q.status(conn))
+        conn.close()
 
 
 def dashboard_cmd(host, port):
@@ -256,6 +239,17 @@ def main():
     rl = sub.add_parser("rules")
     rl.add_argument("--category", default=None, choices=["style", "math", "pedagogy"])
     rl.add_argument("--prompt", action="store_true", help="print prompt-ready block")
+    orc = sub.add_parser("orchestrate")
+    osub = orc.add_subparsers(dest="sub", required=True)
+    oe = osub.add_parser("enqueue")
+    oe.add_argument("--dir", required=True)
+    oe.add_argument("--grade", default=None)
+    oe.add_argument("--limit", type=int, default=None)
+    oe.add_argument("--max-ocr-pages", type=int, default=0)
+    osub.add_parser("status")
+    orun = osub.add_parser("run")
+    orun.add_argument("--workers", type=int, default=2)
+    orun.add_argument("--max", type=int, default=None)
     args = ap.parse_args()
     if args.cmd == "ingest":
         ingest(args.pdf, args.grade, args.max_ocr_pages)
@@ -276,6 +270,8 @@ def main():
         repropagate_cmd(args.doc_id)
     elif args.cmd == "dashboard":
         dashboard_cmd(args.host, args.port)
+    elif args.cmd == "orchestrate":
+        orchestrate_cmd(args)
     elif args.cmd == "feedback":
         feedback_cmd(args)
     elif args.cmd == "rules":
