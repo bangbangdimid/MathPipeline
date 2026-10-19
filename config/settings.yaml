@@ -1,0 +1,21 @@
+# MathPipeline settings
+paths:
+  db: data/math.db
+  renders: data/renders
+  quarantine: data/quarantine
+  schema: db/schema.sql
+
+ocr:
+  render_dpi: 200            # DPI for rendering scan pages
+  text_layer_min_cpp: 200    # chars/page >= this => born-digital TEXT
+  scan_max_cpp: 40           # chars/page <= this => SCAN
+  sample_pages: 6            # pages to sample when classifying a doc
+
+scalpel:
+  provider: gemini           # free-tier VLM for dense-inline / low-conf blocks
+  enabled: false             # set true once a key is configured
+
+dedup:
+  embedding_model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  minhash_threshold: 0.85
+  cosine_threshold: 0.90

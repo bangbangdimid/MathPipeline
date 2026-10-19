@@ -1,0 +1,26 @@
+# Data & generated artifacts (never committed)
+data/
+*.db
+*.sqlite3
+*.sqlite
+
+# Rendered page images / OCR outputs
+renders/
+*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Secrets / local env
+.env
+*.key
+
+# OS
+Thumbs.db
+.DS_Store

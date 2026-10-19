@@ -1,0 +1,35 @@
+# LLM provider registry. Free-tier first. Quotas are COMMUNITY-REPORTED and
+# shrinking through 2026 — verify each in your own console/dashboard.
+# Keys are read from environment variables (never hard-code them here).
+providers:
+  gemini:
+    kind: vlm              # vision-capable
+    env_key: GEMINI_API_KEY
+    models: [gemini-flash-latest]
+    quota_rpd: 1500        # verify in AI Studio; some projects capped far lower
+    quota_rpm: 10
+    role: [scalpel, compose, verify]   # OCR scalpel for dense-inline pages
+    tier: free
+  groq:
+    kind: text
+    env_key: GROQ_API_KEY
+    models: [llama-3.3-70b-versatile]
+    quota_rpd: 1000
+    quota_tpd: 200000      # token/day is the binding limit
+    role: [classify, compose]
+    tier: free
+  openrouter:
+    kind: mixed
+    env_key: OPENROUTER_API_KEY
+    models: []             # pick :free variants
+    quota_rpd: 50          # 1000 after >=10 credits
+    role: [fallback]
+    tier: free
+
+routing:
+  # cheap-first: local engines handle the bulk; cloud only where flagged
+  ocr_primary: local_hybrid          # pix2text + easyocr-vi (free, offline)
+  ocr_scalpel: gemini                # dense-inline / low-conf blocks only
+  classify_tier12: local_or_groq
+  compose: gemini
+  verify: local_sympy_then_gemini

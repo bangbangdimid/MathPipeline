@@ -1,0 +1,19 @@
+# Core ingest (validated, all local/free)
+pymupdf
+pillow
+numpy
+pix2text          # formulas -> LaTeX (pulls cnstd/cnocr/transformers/onnxruntime)
+easyocr           # Vietnamese prose OCR (lang 'vi')
+pyyaml            # config (optional; config.py falls back to defaults without it)
+
+# Known dep pin: cnstd 1.2.8 imports rapidocr.utils.model_resolver.resolve_model_key
+# which rapidocr>=3.10 renamed to route_to_model_key. ocr_hybrid.py applies a
+# runtime alias shim; if that ever breaks, pin an older rapidocr instead.
+
+# Later phases (not needed for the ingest MVP)
+# sympy                     # verification (numeric/symbolic)
+# sentence-transformers     # embeddings for dedup / semantic search
+# datasketch                # MinHash near-dup
+# lancedb                   # vector store
+# google-generativeai       # Gemini scalpel + compose (needs GEMINI_API_KEY)
+# fastapi, uvicorn          # review dashboard
