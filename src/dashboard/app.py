@@ -142,10 +142,16 @@ def _progress_html():
                    for k, v in s["pages_by_status"].items()) or "<span class='muted'>—</span>"
     vbs = " ".join(f"<span class='pill'>{esc(k)}: {v}</span>"
                    for k, v in s["verify_by_status"].items()) or "<span class='muted'>chưa có</span>"
+    remaining = js.get("queued", 0) + js.get("retry", 0)
+    total = sum(js.values()) or 0
+    pct = int(100 * js.get("done", 0) / total) if total else 0
     running = ", ".join(RUNNING.keys())
     run_line = (f"<p class='muted'>⏳ Đang chạy: <b>{esc(running)}</b></p>" if running
                 else "<p class='muted'>Không có tác vụ nào đang chạy.</p>")
-    return (f"<div class='grid'>{grid}</div>{run_line}"
+    remain_card = (f"<div class='card' style='border-color:var(--accent)'>"
+                   f"<div class='n'>{remaining}</div>"
+                   f"<div class='l'>file CÒN LẠI trong hàng đợi · đã xong {pct}%</div></div>")
+    return (f"<div class='grid'>{remain_card}{grid}</div>{run_line}"
             f"<p class='muted'>Jobs ingest:</p><div class='barwrap'>{jb}</div>"
             f"<p class='muted'>Trạng thái OCR trang:</p><div class='barwrap'>{pbs}</div>"
             f"<p class='muted'>Trạng thái kiểm chứng:</p><div class='barwrap'>{vbs}</div>")
@@ -161,7 +167,7 @@ def home():
  <input name="limit" placeholder="vd: 50">
  <button type="submit">Enqueue (nạp hàng đợi)</button></form>
 <div class="barwrap">
- <button hx-post="/run/ingest" hx-target="#runmsg">▶ Chạy ingest (OCR)</button>
+ <button hx-post="/run/ingest" hx-target="#runmsg">▶ Chạy ingest (tự khởi động lại)</button>
  <button hx-post="/run/build" hx-target="#runmsg">Dựng ngân hàng bài</button>
  <button hx-post="/run/scalpel" hx-target="#runmsg">Scalpel (Gemini)</button></div>
 <div id="runmsg" style="margin-top:10px"></div>"""
@@ -187,13 +193,16 @@ def run_enqueue(dir: str = Form(...), limit: str = Form("")):
     return HTMLResponse(f"<div class='ok'>Enqueue: thêm <b>{added}</b> job mới (tổng {total} pdf).</div>")
 
 
+def _supervise_job():
+    from src.orchestrator.supervisor import supervise
+    s = load_settings()
+    supervise(abspath(s["paths"]["db"]), abspath(s["paths"]["renders"]),
+              workers=2, restart_wait=10)
+
+
 @app.post("/run/ingest", response_class=HTMLResponse)
 def run_ingest():
-    def job():
-        from src.orchestrator.worker import run
-        s = load_settings()
-        run(abspath(s["paths"]["db"]), abspath(s["paths"]["renders"]), 2, None)
-    return HTMLResponse(_launch("ingest (OCR)", job))
+    return HTMLResponse(_launch("ingest (OCR, tự khởi động lại)", _supervise_job))
 
 
 @app.post("/run/build", response_class=HTMLResponse)
@@ -370,3 +379,21 @@ def pdf(cid: int):
     if row and row["pdf_path"] and os.path.exists(row["pdf_path"]):
         return FileResponse(row["pdf_path"], media_type="application/pdf")
     return HTMLResponse("<p>PDF chưa tồn tại.</p>", status_code=404)
+
+
+# --- auto-resume ingest on dashboard startup (handles process interruption) ---
+def _auto_resume():
+    try:
+        c = conn()
+        pend = c.execute(
+            "SELECT COUNT(*) n FROM jobs WHERE job_type='ingest_doc' "
+            "AND status IN ('queued','retry','running')").fetchone()["n"]
+        c.close()
+        if pend > 0:
+            print(f"[dashboard] auto-resume: còn {pend} job -> khởi động supervisor", flush=True)
+            _launch("ingest (OCR, tự khởi động lại)", _supervise_job)
+    except Exception as e:
+        print("[dashboard] auto-resume lỗi:", e, flush=True)
+
+
+_auto_resume()

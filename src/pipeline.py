@@ -129,6 +129,11 @@ def orchestrate_cmd(args):
         conn = db.get_conn(db_path)
         print("[orchestrate] after run:", Q.status(conn))
         conn.close()
+    elif args.sub == "supervise":
+        from src.orchestrator.supervisor import supervise
+        print(f"[orchestrate] supervise: {args.workers} worker(s), tự khởi động lại "
+              f"sau {args.wait}s khi bị ngắt")
+        supervise(db_path, renders, args.workers, args.wait)
 
 
 def dashboard_cmd(host, port):
@@ -250,6 +255,9 @@ def main():
     orun = osub.add_parser("run")
     orun.add_argument("--workers", type=int, default=2)
     orun.add_argument("--max", type=int, default=None)
+    osup = osub.add_parser("supervise")
+    osup.add_argument("--workers", type=int, default=2)
+    osup.add_argument("--wait", type=int, default=10)
     args = ap.parse_args()
     if args.cmd == "ingest":
         ingest(args.pdf, args.grade, args.max_ocr_pages)

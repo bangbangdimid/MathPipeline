@@ -63,8 +63,16 @@ def deactivate_rule(conn, rule_id):
 
 
 def rules_for_prompt(conn, category=None) -> str:
-    """Prompt-ready block of active rules — injected into compose/verify prompts."""
-    rows = active_rules(conn, category)
+    """Prompt-ready block of active rules — injected into compose/verify prompts.
+
+    Excludes the 'ops' category (operational ingest lessons) so only content rules
+    (style/math/pedagogy) reach the model."""
+    if category:
+        rows = active_rules(conn, category)
+    else:
+        rows = conn.execute(
+            "SELECT id,rule_text,category FROM feedback_rules WHERE active=1 "
+            "AND category IN ('style','math','pedagogy') ORDER BY category,id").fetchall()
     if not rows:
         return ""
     lines = ["# Quy tắc rút ra từ phản hồi trước (bắt buộc tuân thủ):"]
