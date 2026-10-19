@@ -148,6 +148,13 @@ def compose_cmd(title, grade, label, difficulty, limit, use_llm=False):
     print(f"          pdf={res['pdf']}")
 
 
+def dashboard_cmd(host, port):
+    import uvicorn
+    from src.dashboard.app import app as dash_app
+    print(f"[dashboard] http://{host}:{port}  (Ctrl+C để dừng)")
+    uvicorn.run(dash_app, host=host, port=port, log_level="warning")
+
+
 def repropagate_cmd(doc_id):
     settings = load_settings()
     conn = db.get_conn(abspath(settings["paths"]["db"]))
@@ -232,6 +239,9 @@ def main():
     sc.add_argument("--limit", type=int, default=None)
     rp = sub.add_parser("repropagate")
     rp.add_argument("--doc-id", type=int, default=None)
+    ds = sub.add_parser("dashboard")
+    ds.add_argument("--host", default="127.0.0.1")
+    ds.add_argument("--port", type=int, default=8000)
     fb = sub.add_parser("feedback")
     fb.add_argument("--target", required=True, choices=["problem", "solution", "chuyen_de"])
     fb.add_argument("--id", type=int, required=True)
@@ -264,6 +274,8 @@ def main():
         scalpel_cmd(args.limit)
     elif args.cmd == "repropagate":
         repropagate_cmd(args.doc_id)
+    elif args.cmd == "dashboard":
+        dashboard_cmd(args.host, args.port)
     elif args.cmd == "feedback":
         feedback_cmd(args)
     elif args.cmd == "rules":

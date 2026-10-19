@@ -15,7 +15,10 @@ sympy             # verify: symbolic/numeric checkers
 datasketch        # dedup: MinHash near-dup
 google-genai      # Gemini scalpel + compose prose (needs env GEMINI_API_KEY)
 
+fastapi           # review dashboard
+uvicorn[standard] # dashboard server
+python-multipart  # dashboard form posts
+
 # Later phases (not yet used)
 # sentence-transformers     # semantic embeddings for dedup / search
 # lancedb                   # vector store
-# fastapi, uvicorn          # review dashboard
