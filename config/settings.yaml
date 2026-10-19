@@ -3,7 +3,12 @@ paths:
   db: data/math.db
   renders: data/renders
   quarantine: data/quarantine
+  chuyende: data/chuyende
   schema: db/schema.sql
+
+tools:
+  # full path to xelatex (MiKTeX). Override per machine; falls back to PATH.
+  xelatex: C:\Users\NGOCD\AppData\Local\Programs\MiKTeX\miktex\bin\x64\xelatex.exe
 
 ocr:
   render_dpi: 200            # DPI for rendering scan pages

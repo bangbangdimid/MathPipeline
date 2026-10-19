@@ -10,10 +10,12 @@ pyyaml            # config (optional; config.py falls back to defaults without i
 # which rapidocr>=3.10 renamed to route_to_model_key. ocr_hybrid.py applies a
 # runtime alias shim; if that ever breaks, pin an older rapidocr instead.
 
-# Later phases (not needed for the ingest MVP)
-# sympy                     # verification (numeric/symbolic)
-# sentence-transformers     # embeddings for dedup / semantic search
-# datasketch                # MinHash near-dup
+# Built stages
+sympy             # verify: symbolic/numeric checkers
+datasketch        # dedup: MinHash near-dup
+google-genai      # Gemini scalpel + compose prose (needs env GEMINI_API_KEY)
+
+# Later phases (not yet used)
+# sentence-transformers     # semantic embeddings for dedup / search
 # lancedb                   # vector store
-# google-generativeai       # Gemini scalpel + compose (needs GEMINI_API_KEY)
 # fastapi, uvicorn          # review dashboard

@@ -123,6 +123,91 @@ def verify_cmd(demo: bool):
     conn.close()
 
 
+def compose_cmd(title, grade, label, difficulty, limit, use_llm=False):
+    settings = load_settings()
+    conn = db.get_conn(abspath(settings["paths"]["db"]))
+    xelatex = settings.get("tools", {}).get("xelatex", "xelatex")
+    out_dir = abspath(settings["paths"].get("chuyende", "data/chuyende"))
+    provider = None
+    if use_llm:
+        from src.providers.base import get_active_provider
+        provider = get_active_provider(load_providers())
+        if provider is None:
+            print("[compose] --use-llm requested but GEMINI_API_KEY not set; "
+                  "using template prose.")
+    from src.compose.builder import compose
+    res, err = compose(conn, title, grade, label, difficulty, limit, xelatex, out_dir,
+                       provider=provider)
+    conn.close()
+    if err:
+        print(f"[compose] {err}")
+        return
+    print(f"[compose] chuyen_de id={res['chuyen_de_id']} problems={res['problems']} "
+          f"compile_rc={res['compile_rc']}")
+    print(f"          tex={res['tex']}")
+    print(f"          pdf={res['pdf']}")
+
+
+def repropagate_cmd(doc_id):
+    settings = load_settings()
+    conn = db.get_conn(abspath(settings["paths"]["db"]))
+    from src.ingest.repropagate import repropagate
+    res = repropagate(conn, doc_id)
+    conn.close()
+    print(f"[repropagate] pages_rebuilt={res['pages_rebuilt']} problems={res['problems']} "
+          f"(re-classified + re-deduped)")
+
+
+def scalpel_cmd(limit):
+    settings = load_settings()
+    conn = db.get_conn(abspath(settings["paths"]["db"]))
+    from src.providers.base import get_active_provider
+    from src.ingest.scalpel import rescan_scalpel
+    provider = get_active_provider(load_providers())
+    if provider is None:
+        print("[scalpel] No Gemini keys configured — add them to config/gemini_keys.txt "
+              "(one per line) or set GEMINI_API_KEYS. No elements changed.")
+        pending = conn.execute(
+            "SELECT COUNT(*) c FROM page_elements WHERE needs_scalpel=1").fetchone()["c"]
+        print(f"[scalpel] {pending} elements are flagged needs_scalpel and waiting.")
+        conn.close()
+        return
+    res = rescan_scalpel(conn, provider, limit)
+    conn.close()
+    print(f"[scalpel] pending={res.get('pending')} updated={res.get('updated')} "
+          f"failed={res.get('failed')}")
+
+
+def feedback_cmd(args):
+    settings = load_settings()
+    conn = db.get_conn(abspath(settings["paths"]["db"]))
+    from src.feedback import store
+    fid = store.record_feedback(conn, args.target, args.id, args.action,
+                                reason=args.reason, before=args.before,
+                                after=args.after, editor=args.editor)
+    print(f"[feedback] recorded id={fid} ({args.action} on {args.target} {args.id})")
+    rule_text = args.rule or (args.reason if args.action in store.CORRECTION_ACTIONS else None)
+    if rule_text:
+        rid, cat = store.add_rule(conn, rule_text, args.category, derived_from=fid)
+        print(f"[feedback] distilled rule id={rid} [{cat}]: {rule_text}")
+    conn.close()
+
+
+def rules_cmd(category, as_prompt):
+    settings = load_settings()
+    conn = db.get_conn(abspath(settings["paths"]["db"]))
+    from src.feedback import store
+    if as_prompt:
+        print(store.rules_for_prompt(conn, category) or "(no active rules)")
+    else:
+        rows = store.active_rules(conn, category)
+        if not rows:
+            print("(no active rules)")
+        for r in rows:
+            print(f"  #{r['id']} [{r['category']}] {r['rule_text']}")
+    conn.close()
+
+
 def main():
     ap = argparse.ArgumentParser(prog="mathpipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -136,6 +221,31 @@ def main():
     sub.add_parser("classify")
     vf = sub.add_parser("verify")
     vf.add_argument("--demo", action="store_true")
+    co = sub.add_parser("compose")
+    co.add_argument("--title", required=True)
+    co.add_argument("--grade", default=None)
+    co.add_argument("--label", default=None)
+    co.add_argument("--difficulty", type=int, default=None)
+    co.add_argument("--limit", type=int, default=None)
+    co.add_argument("--use-llm", action="store_true", help="generate intro prose via Gemini")
+    sc = sub.add_parser("scalpel")
+    sc.add_argument("--limit", type=int, default=None)
+    rp = sub.add_parser("repropagate")
+    rp.add_argument("--doc-id", type=int, default=None)
+    fb = sub.add_parser("feedback")
+    fb.add_argument("--target", required=True, choices=["problem", "solution", "chuyen_de"])
+    fb.add_argument("--id", type=int, required=True)
+    fb.add_argument("--action", required=True,
+                    choices=["approve", "reject", "edit", "rewrite"])
+    fb.add_argument("--reason", default=None)
+    fb.add_argument("--before", default=None)
+    fb.add_argument("--after", default=None)
+    fb.add_argument("--rule", default=None, help="explicit rule to distill")
+    fb.add_argument("--category", default=None, choices=["style", "math", "pedagogy"])
+    fb.add_argument("--editor", default="human")
+    rl = sub.add_parser("rules")
+    rl.add_argument("--category", default=None, choices=["style", "math", "pedagogy"])
+    rl.add_argument("--prompt", action="store_true", help="print prompt-ready block")
     args = ap.parse_args()
     if args.cmd == "ingest":
         ingest(args.pdf, args.grade, args.max_ocr_pages)
@@ -147,6 +257,17 @@ def main():
         classify_cmd()
     elif args.cmd == "verify":
         verify_cmd(args.demo)
+    elif args.cmd == "compose":
+        compose_cmd(args.title, args.grade, args.label, args.difficulty, args.limit,
+                    use_llm=args.use_llm)
+    elif args.cmd == "scalpel":
+        scalpel_cmd(args.limit)
+    elif args.cmd == "repropagate":
+        repropagate_cmd(args.doc_id)
+    elif args.cmd == "feedback":
+        feedback_cmd(args)
+    elif args.cmd == "rules":
+        rules_cmd(args.category, args.prompt)
 
 
 if __name__ == "__main__":

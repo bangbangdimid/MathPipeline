@@ -20,6 +20,7 @@ env/
 # Secrets / local env
 .env
 *.key
+config/gemini_keys.txt
 
 # OS
 Thumbs.db

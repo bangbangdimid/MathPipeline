@@ -1,0 +1,12 @@
+# === CÁCH DÙNG ===
+# 1) Copy file này thành  gemini_keys.txt  (bỏ đuôi .example), cùng thư mục config/
+# 2) Dán mỗi API key Gemini trên MỘT DÒNG (có bao nhiêu key dán bấy nhiêu dòng).
+# 3) Dòng trống và dòng bắt đầu bằng '#' sẽ bị bỏ qua.
+#
+# File gemini_keys.txt đã được .gitignore -> KHÔNG bao giờ bị commit lên git.
+# Hệ thống sẽ tự XOAY VÒNG các key: hết quota/429 ở key này thì tự chuyển key kế tiếp.
+#
+# Ví dụ (thay bằng key thật của bạn):
+# AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# AIzaSyYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY
+# AIzaSyZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
