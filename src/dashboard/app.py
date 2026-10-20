@@ -119,7 +119,7 @@ def page(body):
     return HTMLResponse(_HEAD + body + _FOOT)
 
 
-_CORPUS_DEFAULT = r"C:\Users\NGOCD\Downloads\tai_lieu_toan_thcs_full"
+_CORPUS_DEFAULT = r"D:\Downloads\tai_lieu_toan_thcs_full"
 
 
 def _jobs_status(c):
