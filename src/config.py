@@ -9,8 +9,8 @@ _DEFAULTS = {
               "quarantine": "data/quarantine", "chuyende": "data/chuyende",
               "schema": "db/schema.sql"},
     "tools": {"xelatex": "xelatex"},
-    "ocr": {"render_dpi": 200, "text_layer_min_cpp": 200, "scan_max_cpp": 40,
-            "sample_pages": 6},
+    "ocr": {"engine": "gemini", "workers": 6, "render_dpi": 200,
+            "text_layer_min_cpp": 200, "scan_max_cpp": 40, "sample_pages": 6},
     "scalpel": {"provider": "gemini", "enabled": False},
     "dedup": {"minhash_threshold": 0.85, "cosine_threshold": 0.90},
 }

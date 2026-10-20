@@ -11,6 +11,8 @@ tools:
   xelatex: C:\Users\NGOCD\AppData\Local\Programs\MiKTeX\miktex\bin\x64\xelatex.exe
 
 ocr:
+  engine: gemini             # local (pix2text+easyocr, free offline) | gemini (full-page, higher quality)
+  workers: 6                 # concurrent ingest workers (gemini = API-bound, can be high; local keep ~2)
   render_dpi: 200            # DPI for rendering scan pages
   text_layer_min_cpp: 200    # chars/page >= this => born-digital TEXT
   scan_max_cpp: 40           # chars/page <= this => SCAN

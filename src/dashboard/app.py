@@ -196,8 +196,9 @@ def run_enqueue(dir: str = Form(...), limit: str = Form("")):
 def _supervise_job():
     from src.orchestrator.supervisor import supervise
     s = load_settings()
+    workers = int((s.get("ocr", {}) or {}).get("workers", 2) or 2)
     supervise(abspath(s["paths"]["db"]), abspath(s["paths"]["renders"]),
-              workers=2, restart_wait=10)
+              workers=workers, restart_wait=10)
 
 
 @app.post("/run/ingest", response_class=HTMLResponse)
