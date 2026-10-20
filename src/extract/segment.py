@@ -6,7 +6,7 @@ Deeper hypotheses/conclusion extraction is a later LLM step; this is honest v0.
 """
 from __future__ import annotations
 import re
-from src.extract.textnorm import canonical_hash
+from src.extract.textnorm import canonical_hash, normalize
 
 PROBLEM_RE = re.compile(r'(?im)^\s*(Bài|Câu|BÀI|CÂU)\s+([0-9IVXLivxl]+)\b')
 SOLUTION_MARK = re.compile(r'(?i)(Lời giải|Hướng dẫn giải|Hướng dẫn|Đáp án|Lời giải chi tiết|Giải\s*:)')
@@ -24,6 +24,44 @@ def strip_boilerplate(s: str) -> str:
     if m and m.start() > 20:   # don't nuke a whole short statement
         return s[:m.start()].rstrip()
     return s
+
+
+# --- junk / branding / cover filtering ---
+_CONTACT = re.compile(
+    r'(?i)(0\d{8,10}|lớp toán|trung tâm|hotline|facebook|zalo|đăng ký|miễn phí'
+    r'|dự án tách đề|\bGV\b|giáo viên\s*[:：]|cô giáo|thầy\s)')
+_MATHY = re.compile(r'(\$|\\\[|\\\(|\\frac|\\sqrt|\\cdot|\^|=|\\geq|\\leq|\\in)')
+_VERB = re.compile(
+    r'(?i)\b(chứng minh|chứng tỏ|tính|tìm|giải|rút gọn|xác định|so sánh|vẽ|lập|hỏi|biết)\b')
+_TOC = re.compile(r'(?i)(mục lục|lời nói đầu|lời mở đầu|tài liệu tham khảo|danh mục)')
+
+
+def strip_contact_header(text: str) -> str:
+    """Remove leading branding/contact lines (center name, teacher, phone)."""
+    lines = text.split("\n")
+    while lines:
+        ln = lines[0].strip()
+        if ln == "" or (_CONTACT.search(ln) and not _MATHY.search(ln) and len(ln) < 80):
+            lines.pop(0)
+        else:
+            break
+    return "\n".join(lines).strip()
+
+
+def is_problem(text: str) -> bool:
+    """True only for chunks that look like an actual math problem (not cover/TOC/contact)."""
+    t = text.strip()
+    if len(t) < 20:
+        return False
+    if _TOC.search(t):
+        return False
+    has_math = bool(_MATHY.search(t))
+    has_verb = bool(_VERB.search(t))
+    if not (has_math or has_verb):
+        return False
+    if _CONTACT.search(t) and not has_math and len(t) < 90:
+        return False
+    return True
 CONCL_VERBS = re.compile(
     r'(?i)\b(Chứng minh|Chứng tỏ|Tính|Tìm|Giải|Xác định|So sánh|Rút gọn|Vẽ|Lập|Cho biết|Hỏi)\b')
 
@@ -62,6 +100,9 @@ def split_problems(page_latex: str):
             continue
         statement, solution = split_solution(text)
         statement = strip_boilerplate(statement)
+        statement = strip_contact_header(statement)
+        if not is_problem(statement):
+            continue   # skip cover / table-of-contents / contact / branding pages
         hyp, concl = split_hyp_concl(statement)
         problems.append(dict(number=num, statement_latex=statement,
                              hypotheses=hyp, conclusion=concl, solution_latex=solution))
