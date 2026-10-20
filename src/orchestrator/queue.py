@@ -70,3 +70,12 @@ def fail_job(conn, jid, err):
 def status(conn):
     return {r["status"]: r["n"] for r in conn.execute(
         "SELECT status, COUNT(*) n FROM jobs WHERE job_type='ingest_doc' GROUP BY status")}
+
+
+def requeue_failed(conn, bump_attempts=8):
+    """Reset failed ingest jobs back to the queue (fresh attempts) to run again."""
+    cur = conn.execute(
+        "UPDATE jobs SET status='queued', attempts=0, max_attempts=?, error=NULL "
+        "WHERE job_type='ingest_doc' AND status='failed'", (bump_attempts,))
+    conn.commit()
+    return cur.rowcount

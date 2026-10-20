@@ -129,6 +129,11 @@ def orchestrate_cmd(args):
         conn = db.get_conn(db_path)
         print("[orchestrate] after run:", Q.status(conn))
         conn.close()
+    elif args.sub == "requeue-failed":
+        conn = db.get_conn(db_path)
+        n = Q.requeue_failed(conn)
+        conn.close()
+        print(f"[orchestrate] requeued {n} failed jobs")
     elif args.sub == "supervise":
         from src.orchestrator.supervisor import supervise
         print(f"[orchestrate] supervise: {args.workers} worker(s), tự khởi động lại "
@@ -252,6 +257,7 @@ def main():
     oe.add_argument("--limit", type=int, default=None)
     oe.add_argument("--max-ocr-pages", type=int, default=0)
     osub.add_parser("status")
+    osub.add_parser("requeue-failed")
     orun = osub.add_parser("run")
     orun.add_argument("--workers", type=int, default=2)
     orun.add_argument("--max", type=int, default=None)

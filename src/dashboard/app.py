@@ -168,6 +168,7 @@ def home():
  <button type="submit">Enqueue (nạp hàng đợi)</button></form>
 <div class="barwrap">
  <button hx-post="/run/ingest" hx-target="#runmsg">▶ Chạy ingest (tự khởi động lại)</button>
+ <button hx-post="/run/requeue" hx-target="#runmsg">Chạy lại file lỗi</button>
  <button hx-post="/run/build" hx-target="#runmsg">Dựng ngân hàng bài</button>
  <button hx-post="/run/scalpel" hx-target="#runmsg">Scalpel (Gemini)</button></div>
 <div id="runmsg" style="margin-top:10px"></div>"""
@@ -204,6 +205,16 @@ def _supervise_job():
 @app.post("/run/ingest", response_class=HTMLResponse)
 def run_ingest():
     return HTMLResponse(_launch("ingest (OCR, tự khởi động lại)", _supervise_job))
+
+
+@app.post("/run/requeue", response_class=HTMLResponse)
+def run_requeue():
+    from src.orchestrator import queue as OQ
+    c = conn()
+    n = OQ.requeue_failed(c)
+    c.close()
+    launched = _launch("ingest (OCR, tự khởi động lại)", _supervise_job)
+    return HTMLResponse(f"<div class='ok'>Đã đưa lại <b>{n}</b> file lỗi vào hàng đợi. {launched}</div>")
 
 
 @app.post("/run/build", response_class=HTMLResponse)

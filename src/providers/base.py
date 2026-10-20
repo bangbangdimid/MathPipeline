@@ -67,6 +67,7 @@ class GeminiProvider(LLMProvider):
         if not self.available:
             raise RuntimeError("No Gemini API keys configured "
                                "(GEMINI_API_KEYS / config/gemini_keys.txt / GEMINI_API_KEY)")
+        import time
         from google import genai
         from google.genai import types
         contents = []
@@ -76,23 +77,27 @@ class GeminiProvider(LLMProvider):
         contents.append(prompt)
 
         last_err = None
-        for _ in range(len(self.rotator)):
-            key = self.rotator.current()
-            if key is None:
-                break
+        slept = 0.0
+        for _ in range(len(self.rotator) * 2 + 8):
+            picked = self.rotator.pick()
+            if picked is None:                      # all keys cooling down
+                if slept >= 45:
+                    break
+                w = min(max(self.rotator.wait_hint(), 1.0), 15.0)
+                time.sleep(w)
+                slept += w
+                continue
+            idx, key = picked
             try:
                 client = genai.Client(api_key=key)
                 resp = client.models.generate_content(model=self._model(), contents=contents)
                 return (resp.text or "").strip()
             except Exception as e:
-                # Rotate past ANY failing key — quota/429, invalid key, or transient.
-                # Only give up once every key has been tried.
-                self.rotator.mark_exhausted()
-                self.rotator.rotate()
                 last_err = e
+                m = str(e)
+                self.rotator.penalize(idx, 60 if any(q in m for q in _QUOTA_MARKERS) else 20)
                 continue
-        raise RuntimeError(
-            f"All {len(self.rotator)} Gemini keys failed. Last error: {last_err}")
+        raise RuntimeError(f"Gemini hết lượt (đã chờ {slept:.0f}s). Lỗi cuối: {last_err}")
 
     def vlm_to_latex(self, image_path: str) -> str:
         out = self.complete(_SCALPEL_PROMPT, images=[image_path])
