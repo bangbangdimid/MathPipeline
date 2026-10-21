@@ -59,9 +59,12 @@ def complete_job(conn, jid, target_id=None):
     conn.commit()
 
 
-def fail_job(conn, jid, err):
-    r = conn.execute("SELECT attempts,max_attempts FROM jobs WHERE id=?", (jid,)).fetchone()
-    status = "retry" if r["attempts"] < r["max_attempts"] else "failed"
+def fail_job(conn, jid, err, permanent=False):
+    if permanent:
+        status = "failed"
+    else:
+        r = conn.execute("SELECT attempts,max_attempts FROM jobs WHERE id=?", (jid,)).fetchone()
+        status = "retry" if r["attempts"] < r["max_attempts"] else "failed"
     conn.execute("UPDATE jobs SET status=?, error=?, updated_at=datetime('now') WHERE id=?",
                  (status, str(err)[:500], jid))
     conn.commit()

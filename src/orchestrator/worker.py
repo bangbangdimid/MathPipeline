@@ -39,8 +39,14 @@ def worker_loop(db_path, renders, worker_id, max_jobs):
             Q.complete_job(conn, job["id"], did)
             print(f"[w{worker_id}] job{job['id']} -> doc{did}", flush=True)
         except Exception as e:
-            Q.fail_job(conn, job["id"], repr(e))
-            print(f"[w{worker_id}] job{job['id']} FAILED: {e}", flush=True)
+            msg = str(e)
+            # FK/UNIQUE errors are deterministic (duplicate-file race) -> don't retry
+            # them forever (they block the queue); mark failed immediately.
+            permanent = ("FOREIGN KEY" in msg or "IntegrityError" in msg
+                         or "UNIQUE constraint" in msg)
+            Q.fail_job(conn, job["id"], repr(e), permanent=permanent)
+            tag = " (permanent)" if permanent else ""
+            print(f"[w{worker_id}] job{job['id']} FAILED{tag}: {e}", flush=True)
         done += 1
     conn.close()
     print(f"[w{worker_id}] exit ({done} jobs this run)", flush=True)
