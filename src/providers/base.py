@@ -131,7 +131,7 @@ class GeminiProvider(LLMProvider):
                     if any(x in em for x in _MODEL_DEAD):
                         self._model_cool[model] = time.time() + 6 * 3600     # 6h
                     elif any(x in em for x in _MODEL_BUSY):
-                        self._model_cool[model] = time.time() + 300          # 5 min
+                        self._model_cool[model] = time.time() + 30           # transient -> short
                     elif any(q in em for q in _QUOTA_MARKERS):
                         quota_hit = True                                     # try next model
                         self._model_cool[model] = time.time() + 120         # skip it briefly
