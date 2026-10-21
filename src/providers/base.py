@@ -44,7 +44,12 @@ _SCALPEL_PROMPT = (
 
 
 _QUOTA_MARKERS = ("429", "RESOURCE_EXHAUSTED", "quota", "exhausted", "RateLimit",
-                  "rate limit", "RESOURCE_EXHAUSTED")
+                  "rate limit")
+# model is unusable (bad name / no access) -> cool it for a long time
+_MODEL_DEAD = ("404", "NOT_FOUND", "not found", "does not exist", "not supported",
+               "is not supported", "unsupported", "PERMISSION_DENIED")
+# model temporarily overloaded / server hiccup -> cool it briefly
+_MODEL_BUSY = ("503", "UNAVAILABLE", "overloaded", "overload", "500", "INTERNAL")
 
 
 class GeminiProvider(LLMProvider):
@@ -54,14 +59,17 @@ class GeminiProvider(LLMProvider):
         super().__init__(cfg)
         from src.providers.keyring import load_keys, KeyRotator
         self.rotator = KeyRotator(load_keys())
+        self._model_cool: dict[str, float] = {}   # model -> epoch available again
 
     @property
     def available(self) -> bool:
         return len(self.rotator) > 0
 
-    def _model(self) -> str:
-        models = self.cfg.get("models") or ["gemini-flash-latest"]
-        return models[0]
+    def _models(self) -> list[str]:
+        env = os.environ.get("LLM_MODEL")
+        if env:
+            return [env.strip()]
+        return self.cfg.get("models") or ["gemini-flash-latest"]
 
     def complete(self, prompt: str, images: list[str] | None = None) -> str:
         if not self.available:
@@ -76,28 +84,52 @@ class GeminiProvider(LLMProvider):
                 contents.append(types.Part.from_bytes(data=fh.read(), mime_type=_mime_of(p)))
         contents.append(prompt)
 
+        all_models = self._models()
         last_err = None
         slept = 0.0
-        for _ in range(len(self.rotator) * 2 + 8):
+        for _ in range(len(self.rotator) * len(all_models) + 12):
+            now = time.time()
+            avail_models = [m for m in all_models if self._model_cool.get(m, 0) <= now]
+            if not avail_models:                       # every model cooling (rare)
+                if slept >= 60:
+                    break
+                time.sleep(10); slept += 10
+                continue
             picked = self.rotator.pick()
-            if picked is None:                      # all keys cooling down
-                if slept >= 45:
+            if picked is None:                         # every key cooling
+                if slept >= 60:
                     break
                 w = min(max(self.rotator.wait_hint(), 1.0), 15.0)
-                time.sleep(w)
-                slept += w
+                time.sleep(w); slept += w
                 continue
             idx, key = picked
-            try:
-                client = genai.Client(api_key=key)
-                resp = client.models.generate_content(model=self._model(), contents=contents)
-                return (resp.text or "").strip()
-            except Exception as e:
-                last_err = e
-                m = str(e)
-                self.rotator.penalize(idx, 60 if any(q in m for q in _QUOTA_MARKERS) else 20)
-                continue
-        raise RuntimeError(f"Gemini hết lượt (đã chờ {slept:.0f}s). Lỗi cuối: {last_err}")
+            client = genai.Client(api_key=key)
+            quota_hit = False
+            # Try each still-usable model with THIS key (models have separate quotas),
+            # strongest first, before giving up on the key.
+            for model in avail_models:
+                try:
+                    resp = client.models.generate_content(model=model, contents=contents)
+                    return (resp.text or "").strip()
+                except Exception as e:
+                    last_err = e
+                    em = str(e)
+                    if any(x in em for x in _MODEL_DEAD):
+                        self._model_cool[model] = time.time() + 6 * 3600     # 6h
+                    elif any(x in em for x in _MODEL_BUSY):
+                        self._model_cool[model] = time.time() + 300          # 5 min
+                    elif any(q in em for q in _QUOTA_MARKERS):
+                        quota_hit = True                                     # try next model
+                    else:
+                        self.rotator.penalize(idx, 45)                       # transient -> next key
+                        quota_hit = False
+                        break
+            else:
+                # all available models failed for this key without a hard error
+                if quota_hit:
+                    self.rotator.penalize(idx, 300)                          # key rate-limited 5 min
+        raise RuntimeError(
+            f"Gemini hết lượt cho mọi model {all_models} (đã chờ {slept:.0f}s). Lỗi cuối: {last_err}")
 
     def vlm_to_latex(self, image_path: str) -> str:
         out = self.complete(_SCALPEL_PROMPT, images=[image_path])

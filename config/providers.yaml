@@ -5,7 +5,16 @@ providers:
   gemini:
     kind: vlm              # vision-capable
     env_key: GEMINI_API_KEY
-    models: [gemini-flash-latest]
+    # Fallback chain, strong -> light. When every key of a model is rate-limited (429)
+    # or the model 404s, the provider drops to the next model automatically.
+    # Override with a single model via env LLM_MODEL.
+    models:
+      - gemini-3.6-flash
+      - gemini-3.5-flash
+      - gemini-3-flash-preview
+      - gemini-3.5-flash-lite
+      - gemini-flash-lite-latest
+      - gemma-4-26b-a4b-it        # last resort
     quota_rpd: 1500        # verify in AI Studio; some projects capped far lower
     quota_rpm: 10
     role: [scalpel, compose, verify]   # OCR scalpel for dense-inline pages
